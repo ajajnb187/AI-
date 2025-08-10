@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>RagFlow 聊天测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .chat-container {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            background-color: #f9f9f9;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            border-radius: 5px;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+            margin-left: 20px;
+            text-align: right;
+        }
+        .assistant-message {
+            background-color: #f1f1f1;
+            margin-right: 20px;
+        }
+        .input-container {
+            display: flex;
+        }
+        #user-input {
+            flex-grow: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            padding: 8px 16px;
+            margin-left: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .session-info {
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        .reference {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 5px;
+            border-top: 1px dashed #ddd;
+            padding-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>RagFlow 聊天测试</h1>
+    
+    <div class="session-info">
+        <span>会话ID: </span><span id="session-id">未创建</span>
+        <button id="new-session">新会话</button>
+    </div>
+    
+    <div class="chat-container" id="chat-container"></div>
+    
+    <div class="input-container">
+        <input type="text" id="user-input" placeholder="请输入您的问题..." />
+        <button id="send-btn">发送</button>
+        <button id="stream-btn">流式发送</button>
+    </div>
+
+    <script>
+        // 页面元素
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const streamBtn = document.getElementById('stream-btn');
+        const newSessionBtn = document.getElementById('new-session');
+        const sessionIdSpan = document.getElementById('session-id');
+        
+        // 当前会话ID
+        let currentSessionId = null;
+        
+        // 添加消息到聊天容器
+        function addMessage(content, isUser, reference = null) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
+            messageDiv.textContent = content;
+            
+            // 如果有引用信息，添加到消息下方
+            if (reference && Object.keys(reference).length > 0) {
+                const referenceDiv = document.createElement('div');
+                referenceDiv.className = 'reference';
+                referenceDiv.textContent = '引用来源: ' + JSON.stringify(reference);
+                messageDiv.appendChild(referenceDiv);
+            }
+            
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        // 发送普通聊天请求
+        function sendChatRequest(question, stream = false) {
+            if (!question.trim()) return;
+            
+            // 添加用户消息
+            addMessage(question, true);
+            userInput.value = '';
+            
+            // 准备请求数据
+            const requestData = {
+                question: question,
+                stream: stream
+            };
+            
+            // 如果有会话ID，添加到请求中
+            if (currentSessionId) {
+                requestData.session_id = currentSessionId;
+            }
+            
+            // 确定API端点
+            const endpoint = stream ? '/api/ragflow/chat/stream' : '/api/ragflow/chat';
+            
+            if (stream) {
+                // 流式请求
+                fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                })
+                .then(response => {
+                    if (!response.ok) throw new Error('网络响应不正常');
+                    
+                    // 创建一个新的消息div用于流式更新
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message assistant-message';
+                    messageDiv.textContent = '';
+                    chatContainer.appendChild(messageDiv);
+                    
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    
+                    function processStream({ done, value }) {
+                        if (done) return;
+                        
+                        // 解码并处理接收到的数据
+                        buffer += decoder.decode(value, { stream: true });
+                        
+                        // 处理SSE格式数据
+                        const lines = buffer.split('\n\n');
+                        buffer = lines.pop(); // 保留最后一个可能不完整的块
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data:')) {
+                                try {
+                                    const jsonData = JSON.parse(line.substring(5).trim());
+                                    
+                                    // 检查是否是结束标记
+                                    if (jsonData.code === 0 && jsonData.data === true) {
+                                        // 流结束
+                                        continue;
+                                    }
+                                    
+                                    // 更新会话ID
+                                    if (jsonData.data && jsonData.data.session_id) {
+                                        currentSessionId = jsonData.data.session_id;
+                                        sessionIdSpan.textContent = currentSessionId;
+                                    }
+                                    
+                                    // 更新消息内容
+                                    if (jsonData.data && jsonData.data.answer) {
+                                        messageDiv.textContent = jsonData.data.answer;
+                                        
+                                        // 如果有引用信息，添加到消息下方
+                                        if (jsonData.data.reference && Object.keys(jsonData.data.reference).length > 0) {
+                                            // 移除旧的引用信息
+                                            const oldRef = messageDiv.querySelector('.reference');
+                                            if (oldRef) messageDiv.removeChild(oldRef);
+                                            
+                                            // 添加新的引用信息
+                                            const referenceDiv = document.createElement('div');
+                                            referenceDiv.className = 'reference';
+                                            referenceDiv.textContent = '引用来源: ' + JSON.stringify(jsonData.data.reference);
+                                            messageDiv.appendChild(referenceDiv);
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.error('解析SSE数据失败:', e);
+                                }
+                            }
+                        }
+                        
+                        // 滚动到底部
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                        
+                        // 继续读取流
+                        return reader.read().then(processStream);
+                    }
+                    
+                    return reader.read().then(processStream);
+                })
+                .catch(error => {
+                    console.error('请求失败:', error);
+                    addMessage('请求失败: ' + error.message, false);
+                });
+            } else {
+                // 普通请求
+                fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // 检查响应
+                    if (data.code === 0 && data.data) {
+                        // 更新会话ID
+                        if (data.data.session_id) {
+                            currentSessionId = data.data.session_id;
+                            sessionIdSpan.textContent = currentSessionId;
+                        }
+                        
+                        // 添加助手消息
+                        addMessage(data.data.answer, false, data.data.reference);
+                    } else {
+                        // 显示错误信息
+                        addMessage(`错误 (${data.code}): ${data.message || '未知错误'}`, false);
+                    }
+                })
+                .catch(error => {
+                    console.error('请求失败:', error);
+                    addMessage('请求失败: ' + error.message, false);
+                });
+            }
+        }
+        
+        // 创建新会话
+        function createNewSession() {
+            currentSessionId = null;
+            sessionIdSpan.textContent = '未创建';
+            chatContainer.innerHTML = '';
+            addMessage('已创建新会话，请开始对话', false);
+        }
+        
+        // 事件监听
+        sendBtn.addEventListener('click', () => sendChatRequest(userInput.value, false));
+        streamBtn.addEventListener('click', () => sendChatRequest(userInput.value, true));
+        newSessionBtn.addEventListener('click', createNewSession);
+        
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendChatRequest(userInput.value, false);
+            }
+        });
+        
+        // 初始化
+        addMessage('欢迎使用RagFlow聊天测试页面，请输入您的问题', false);
+    </script>
+</body>
+</html>

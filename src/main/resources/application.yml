@@ -1,0 +1,16 @@
+spring:
+  ai:
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        model: deepseek-r1:1.5b  # 与本地模型名称对应
+
+# DeepSeek API配置
+deepseek:
+  api-key: sk-7349e9a4f24942ac951485f9483850ba
+  base-url: "https://api.deepseek.com"  # 或 "https://api.deepseek.com/v1"
+
+
+ragflow:
+  api-url: "http://172.26.128.1:9202/api/v1/chats/dd27fb1a714511f082656ea9e04d5c86/completions"  # 替换为实际地址
+  api-key: ragflow-BmYTkxZjIyNzE1NzExZjBiNDQyMTIxYz  # 替换为实际API Key
